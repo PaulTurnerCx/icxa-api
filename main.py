@@ -5,7 +5,7 @@ from typing import Optional
 from scoring import run_company_scoring
 from bands import build_band_output
 
-app = FastAPI(title="ICxA API")
+app = FastAPI(title="ICxA Maturity Map API")
 
 
 class ScoreRequest(BaseModel):
@@ -21,7 +21,7 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "status": "healthy"}
 
 
 @app.post("/score-company")
@@ -43,5 +43,5 @@ def score_company(payload: ScoreRequest):
         "submission_id": payload.submission_id,
         "scores": result["scores"],
         "bands": build_band_output(result["scores"]),
-        "insights": result["insights"]
+        "insights": result["insights"],
     }
