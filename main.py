@@ -44,4 +44,5 @@ def score_company(payload: ScoreRequest):
         "scores": result["scores"],
         "bands": build_band_output(result["scores"]),
         "insights": result["insights"],
+        "evidence": result["evidence"],
     }
