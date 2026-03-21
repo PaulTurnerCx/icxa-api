@@ -35,10 +35,38 @@ def score_company(payload: ScoreRequest):
         raise HTTPException(status_code=400, detail="Missing website")
 
     result = run_company_scoring(company=company, website=website)
+
     scores = result["scores"]
     bands = build_band_output(scores)
     insights = result.get("insights", [])
     evidence = result.get("evidence", {})
+
+    email_body = f"""
+ICxA Maturity Map Results
+
+Company: {company}
+Website: {website}
+Submission ID: {payload.submission_id or ""}
+
+Overall
+- OAI Score: {scores['oai_score']}
+- Confidence Score: {scores['confidence_score']}
+- Overall Band: {bands['overall']}
+
+Pillar Scores
+- Governance: {scores['governance']} ({bands['governance']})
+- System Integration: {scores['system_integration']} ({bands['system_integration']})
+- Operational Readiness: {scores['operational_readiness']} ({bands['operational_readiness']})
+- Performance Validation: {scores['performance_validation']} ({bands['performance_validation']})
+- Outcome Delivery: {scores['outcome_delivery']} ({bands['outcome_delivery']})
+
+Insights
+- {insights[0] if len(insights) > 0 else ""}
+- {insights[1] if len(insights) > 1 else ""}
+- {insights[2] if len(insights) > 2 else ""}
+
+— ICxA Automation
+""".strip()
 
     return {
         "ok": True,
@@ -68,4 +96,7 @@ def score_company(payload: ScoreRequest):
         "insight_1": insights[0] if len(insights) > 0 else "",
         "insight_2": insights[1] if len(insights) > 1 else "",
         "insight_3": insights[2] if len(insights) > 2 else "",
+
+        "email_subject": f"ICxA Maturity Map – {company}",
+        "email_body": email_body,
     }
