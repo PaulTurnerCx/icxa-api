@@ -11,16 +11,16 @@ def normalize_url(url: str) -> str:
 def run_company_scoring(company: str, website: str) -> dict:
     website = normalize_url(website)
 
-    # TEMPORARY PLACEHOLDER
-    # Replace this section with your real pipeline next
+    # TEMP PLACEHOLDER
+    # Replace this section with your real scoring logic
     scores = {
-        "governance": 50,
-        "system_integration": 30,
-        "operational_readiness": 40,
-        "performance_validation": 45,
-        "outcome_delivery": 60,
-        "oai_score": 45,
-        "confidence_score": 70,
+        "governance": 50.0,
+        "system_integration": 30.0,
+        "operational_readiness": 40.0,
+        "performance_validation": 45.0,
+        "outcome_delivery": 60.0,
+        "oai_score": 45.0,
+        "confidence_score": 70.0,
     }
 
     insights = [
