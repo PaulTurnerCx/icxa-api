@@ -15,9 +15,7 @@ app = FastAPI(title="ICxA Maturity Map API")
 
 ZAPIER_CATCH_HOOK_URL = "https://hooks.zapier.com/hooks/catch/4562012/upgk2ly/"
 
-# Simple in-memory job store
-# Fine for initial deployment on one process.
-# For production across multiple workers/instances, move this to Redis/Postgres.
+# In-memory job store
 jobs: Dict[str, Dict[str, Any]] = {}
 
 
@@ -106,20 +104,26 @@ async def process_scoring_job(
     jobs[job_id]["started_at"] = utc_now()
 
     try:
-        # run_company_scoring is assumed to be sync/blocking
-        result = await asyncio.to_thread(run_company_scoring, company=company, website=website)
+        result = await asyncio.to_thread(
+            run_company_scoring,
+            company=company,
+            website=website,
+        )
 
         scores = result["scores"]
         bands = build_band_output(scores)
         insights = result.get("insights", [])
         evidence = result.get("evidence", {})
 
+        email_subject = f"ICxA Maturity Map – {company}"
         email_body = f"""
 ICxA Maturity Map Results
 
+Status: SUCCESS
 Company: {company}
 Website: {website}
 Submission ID: {submission_id or ""}
+Job ID: {job_id}
 
 Overall
 - OAI Score: {scores['oai_score']}
@@ -172,7 +176,7 @@ Insights
             "insight_2": insights[1] if len(insights) > 1 else "",
             "insight_3": insights[2] if len(insights) > 2 else "",
 
-            "email_subject": f"ICxA Maturity Map – {company}",
+            "email_subject": email_subject,
             "email_body": email_body,
 
             "started_at": jobs[job_id]["started_at"],
@@ -186,6 +190,35 @@ Insights
         await send_callback(callback_url, response_payload)
 
     except Exception as e:
+        error_message = str(e)
+        error_traceback = traceback.format_exc()
+        completed_at = utc_now()
+
+        email_subject = f"ICxA Maturity Map FAILED – {company}"
+        email_body = f"""
+ICxA Maturity Map Results
+
+Status: FAILED
+Company: {company}
+Website: {website}
+Submission ID: {submission_id or ""}
+Job ID: {job_id}
+
+Reason
+- Error: {error_message}
+
+Technical Details
+{error_traceback}
+
+Action
+- Review the traceback above
+- Check whether the target website is reachable
+- Check whether scraping/parsing logic failed
+- Retry the job if needed
+
+— ICxA Automation
+""".strip()
+
         error_payload = {
             "ok": False,
             "job_id": job_id,
@@ -193,21 +226,47 @@ Insights
             "company": company,
             "website": website,
             "submission_id": submission_id,
-            "error": str(e),
-            "traceback": traceback.format_exc(),
+            "error": error_message,
+            "traceback": error_traceback,
+            "scores": {},
+            "bands": {},
+            "insights": [],
+            "evidence": {},
+
+            "governance_score": "",
+            "system_integration_score": "",
+            "operational_readiness_score": "",
+            "performance_validation_score": "",
+            "outcome_delivery_score": "",
+            "oai_score": "",
+            "confidence_score": "",
+
+            "governance_band": "",
+            "system_integration_band": "",
+            "operational_readiness_band": "",
+            "performance_validation_band": "",
+            "outcome_delivery_band": "",
+            "overall_band": "Failed",
+
+            "insight_1": f"Scoring failed for {company}.",
+            "insight_2": error_message,
+            "insight_3": "Review traceback for technical details.",
+
+            "email_subject": email_subject,
+            "email_body": email_body,
+
             "started_at": jobs[job_id]["started_at"],
-            "completed_at": utc_now(),
+            "completed_at": completed_at,
         }
 
         jobs[job_id]["status"] = "failed"
-        jobs[job_id]["completed_at"] = error_payload["completed_at"]
+        jobs[job_id]["completed_at"] = completed_at
         jobs[job_id]["error"] = error_payload
 
         try:
             await send_callback(callback_url, error_payload)
-        except Exception:
-            # Avoid crashing the task if callback delivery fails
-            pass
+        except Exception as callback_error:
+            jobs[job_id]["callback_error"] = str(callback_error)
 
 
 async def send_callback(callback_url: str, payload: Dict[str, Any]) -> None:
