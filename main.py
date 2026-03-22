@@ -18,7 +18,6 @@ app = FastAPI(title="ICxA Maturity Map API")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Read secret from environment variable, not from code
 ZAPIER_CATCH_HOOK_URL = os.getenv("ZAPIER_CATCH_HOOK_URL")
 
 # Simple in-memory job store
@@ -78,12 +77,6 @@ async def test_hook():
 
 @app.post("/score-company", status_code=202)
 async def score_company(payload: ScoreRequest):
-    if not ZAPIER_CATCH_HOOK_URL:
-        raise HTTPException(
-            status_code=500,
-            detail="Server is not configured: missing ZAPIER_CATCH_HOOK_URL.",
-        )
-
     company = payload.company.strip()
     website = payload.website.strip()
 
