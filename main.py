@@ -1,26 +1,27 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import os
+import asyncio
+import logging
+import traceback
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from uuid import uuid4
-from datetime import datetime, timezone
-import asyncio
-import traceback
-import logging
 
 import httpx
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from scoring import run_company_scoring
 from bands import build_band_output
 
 app = FastAPI(title="ICxA Maturity Map API")
 
-ZAPIER_CATCH_HOOK_URL = "https://hooks.zapier.com/hooks/catch/4562012/upgk2ly/"
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Read secret from environment variable, not from code
+ZAPIER_CATCH_HOOK_URL = os.getenv("ZAPIER_CATCH_HOOK_URL")
+
 # Simple in-memory job store
-# Good for one-process deployment. Move to Redis/Postgres later if needed.
 jobs: Dict[str, Dict[str, Any]] = {}
 
 
@@ -37,7 +38,11 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "status": "healthy"}
+    return {
+        "ok": True,
+        "status": "healthy",
+        "zapier_hook_configured": bool(ZAPIER_CATCH_HOOK_URL),
+    }
 
 
 @app.get("/jobs/{job_id}")
@@ -50,6 +55,12 @@ def get_job(job_id: str):
 
 @app.post("/test-hook")
 async def test_hook():
+    if not ZAPIER_CATCH_HOOK_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="ZAPIER_CATCH_HOOK_URL is not configured on the server.",
+        )
+
     payload = {
         "ok": True,
         "status": "test",
@@ -58,7 +69,7 @@ async def test_hook():
     }
 
     try:
-        await send_callback(ZAPIER_CATCH_HOOK_URL, payload)
+        await send_callback(payload)
         return {"ok": True, "message": "Hook sent"}
     except Exception as e:
         logger.exception("Test hook failed")
@@ -67,6 +78,12 @@ async def test_hook():
 
 @app.post("/score-company", status_code=202)
 async def score_company(payload: ScoreRequest):
+    if not ZAPIER_CATCH_HOOK_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="Server is not configured: missing ZAPIER_CATCH_HOOK_URL.",
+        )
+
     company = payload.company.strip()
     website = payload.website.strip()
 
@@ -83,7 +100,6 @@ async def score_company(payload: ScoreRequest):
         "company": company,
         "website": website,
         "submission_id": payload.submission_id,
-        "callback_url": ZAPIER_CATCH_HOOK_URL,
         "created_at": utc_now(),
         "started_at": None,
         "completed_at": None,
@@ -101,7 +117,6 @@ async def score_company(payload: ScoreRequest):
             company=company,
             website=website,
             submission_id=payload.submission_id,
-            callback_url=ZAPIER_CATCH_HOOK_URL,
         )
     )
 
@@ -123,7 +138,6 @@ async def process_scoring_job(
     company: str,
     website: str,
     submission_id: Optional[str],
-    callback_url: str,
 ):
     jobs[job_id]["status"] = "running"
     jobs[job_id]["started_at"] = utc_now()
@@ -209,7 +223,7 @@ Insights
         jobs[job_id]["completed_at"] = completed_at
         jobs[job_id]["result"] = response_payload
 
-        await send_callback(callback_url, response_payload)
+        await send_callback(response_payload)
         jobs[job_id]["callback_sent"] = True
 
         logger.info("Completed job %s for %s", job_id, company)
@@ -280,26 +294,32 @@ Traceback
         jobs[job_id]["error"] = error_payload
 
         try:
-            await send_callback(callback_url, error_payload)
-            jobs[job_id]["callback_sent"] = True
+            if ZAPIER_CATCH_HOOK_URL:
+                await send_callback(error_payload)
+                jobs[job_id]["callback_sent"] = True
+            else:
+                jobs[job_id]["callback_sent"] = False
+                jobs[job_id]["callback_error"] = "Missing ZAPIER_CATCH_HOOK_URL"
         except Exception as callback_error:
             jobs[job_id]["callback_sent"] = False
             jobs[job_id]["callback_error"] = str(callback_error)
             logger.exception("Failed to send callback for job %s", job_id)
 
 
-async def send_callback(callback_url: str, payload: Dict[str, Any]) -> None:
+async def send_callback(payload: Dict[str, Any]) -> None:
+    if not ZAPIER_CATCH_HOOK_URL:
+        raise RuntimeError("ZAPIER_CATCH_HOOK_URL is not configured.")
+
     timeout = httpx.Timeout(30.0, connect=10.0)
 
     logger.info(
-        "Sending callback to %s | status=%s | company=%s",
-        callback_url,
+        "Sending callback | status=%s | company=%s",
         payload.get("status"),
         payload.get("company"),
     )
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(callback_url, json=payload)
+        resp = await client.post(ZAPIER_CATCH_HOOK_URL, json=payload)
         logger.info("Callback response status: %s", resp.status_code)
         logger.info("Callback response text: %s", resp.text[:1000])
         resp.raise_for_status()
